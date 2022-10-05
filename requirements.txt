@@ -1,0 +1,8 @@
+numpy
+matplotlib
+xarray
+dask
+zarr
+seaborn
+holoviews
+hvplot
