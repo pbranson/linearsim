@@ -166,7 +166,7 @@ def freqs(T,dt):
 
 
 
-def time_domain_ras(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,with_fft=True):
+def time_domain_ras(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,with_fft=True,fft_equiv_duration=None):
     """
     Generate a time domain realisation of a JONSWAP spectrum using the 
     Random Amplitude Scheme.
@@ -205,6 +205,8 @@ def time_domain_ras(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,
         
         Note: Both are numerically equivalent to within a reasonable precision. Option 
         provided for educational purposes.
+    fft_equiv_duration: float
+        Use an fft resolution equivalent to fft_equiv_duration and crop result to duration.
 
     Returns
     -------
@@ -227,7 +229,10 @@ def time_domain_ras(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,
     """
 
     fs = 1/dt
-    f, df = freqs(duration,dt)
+    if fft_equiv_duration is None:
+        f, df = freqs(duration,dt)
+    else:
+        f, df = freqs(fft_equiv_duration,dt)
     omega = 2*np.pi*f
 
     # Generate spectrum
@@ -256,6 +261,9 @@ def time_domain_ras(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,
         t = np.arange(0,duration,dt)
         timeseries = np.sum(a[:,None]*np.cos(omega[:,None]*t[None,:]) + b[:,None]*np.sin(omega[:,None]*t[None,:]),axis=0)
     
+    if fft_equiv_duration is not None:
+        timeseries = timeseries[:int(duration//dt)]
+
     # Time domain analysis
     if return_ts:
         return timeseries
@@ -264,7 +272,7 @@ def time_domain_ras(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,
         return Tz, Hs, Hmax, H13, r, seed
 
 
-def time_domain_das(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,with_fft=True):
+def time_domain_das(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,with_fft=True,fft_equiv_duration=None):
     """
     Generate a time domain realisation of a JONSWAP spectrum using the 
     Deterministic Amplitude Scheme (Random phase only) .
@@ -303,6 +311,8 @@ def time_domain_das(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,
         
         Note: Both are numerically equivalent to within a reasonable precision. Option 
         provided for educational purposes.
+    fft_equiv_duration: float
+        Use an fft resolution equivalent to fft_equiv_duration and crop result to duration.
 
     Returns
     -------
@@ -325,7 +335,10 @@ def time_domain_das(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,
     """
 
     fs = 1/dt
-    f, df = freqs(duration,dt)
+    if fft_equiv_duration is None:
+        f, df = freqs(duration,dt)
+    else:
+        f, df = freqs(fft_equiv_duration,dt)
     omega = 2*np.pi*f
 
     # Generate spectrum
@@ -349,6 +362,9 @@ def time_domain_das(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,
         # Timeseries sum of spectral components
         t = np.arange(0,duration,dt)
         timeseries = np.sum(np.sqrt(2*S[:,None]*df)*np.cos(omega[:,None]*t[None,:] + phase[:,None]),axis=0)
+
+    if fft_equiv_duration is not None:
+        timeseries = timeseries[:int(duration//dt)]
 
     # Time domain analysis
     if return_ts:
