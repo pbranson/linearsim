@@ -1,17 +1,20 @@
 import numpy as np
+import scipy.stats as ss
 
+def hs(f,Sf):
+    return 4.*np.sqrt(np.sum(Sf*np.gradient(f)))
 
-def jonswap(f,Tp,Hs,gamma):
+def pierson_moskowitz(f,fp,Hs):
     """
-    Generate a JONSWAP frequency dependant variance density spectrum 
+    Generate a Pierson-Moskowitz frequency dependant variance density spectrum 
     with specified parameters
 
     Parameters
     ----------
     f : 1-d numpy.array
         Frequencies at which to sample to 
-    Tp : float
-        Peak period [s]
+    fp : float
+        Peak frequency [1/s]
     Hs : float
         Significant wave height [m]
     gamma : float
@@ -22,24 +25,44 @@ def jonswap(f,Tp,Hs,gamma):
     1-d numpy.array
         Magnitude of the frequency spectra with units [m^2 s^-1]
     """
-    B_PM = (5/4)*(1/Tp)**4
-    A_PM = B_PM*(Hs/2)**2
-    S_f  = A_PM*f**(-5)*np.exp(-B_PM*f**(-4))
+    fn = f/fp
+    pm = fn**-5.*np.exp(-1.25*fn**-4.)
+    scale = Hs**2/(3.2*fp)
+    pm = pm*scale
+    return pm
 
-    siga = 0.07
-    sigb = 0.09
+def jonswap(f,fp,Hs,gamma):
+    """
+    Generate a JONSWAP frequency dependant variance density spectrum 
+    with specified parameters
 
-    fp = 1/Tp # peak frequency
-    lind = np.where(f<=fp)
-    hind = np.where(f>fp)
-    Gf = np.zeros(f.shape)
-    Gf[lind] = gamma**np.exp(-(f[lind]-fp)**2/(2*siga**2*fp**2))
-    Gf[hind] = gamma**np.exp(-(f[hind]-fp)**2/(2*sigb**2*fp**2))
-    C = 1 - 0.287*np.log(gamma)
-    Sf = C*S_f*Gf
+    Parameters
+    ----------
+    f : 1-d numpy.array
+        Frequencies at which to sample to 
+    fp : float
+        Peak frequency [1/s]
+    Hs : float
+        Significant wave height [m]
+    gamma : float
+        Peak enhancement factor in the range [1 .. 7]
 
+    Returns
+    -------
+    1-d numpy.array
+        Magnitude of the frequency spectra with units [m^2 s^-1]
+    """
+
+    fn=f/fp
+    sigma = 0.07*np.ones_like(f)
+    sigma[fn>=1] = 0.09
+    PM = pierson_moskowitz(f,fp,Hs)
+    Gf = gamma**np.exp(-0.5*((fn-1)/sigma)**2)
+    C = 1 - np.exp(-5/4)*np.log(gamma) # Approximate scaling - error for increasing gamma
+    Sf = C*Gf*PM
+    C2 = (Hs/hs(f,Sf))**2 # Numerical adjustment based on integral
+    Sf = C2*Sf
     return Sf
-
 
 def argcrossdown(data):
     """
@@ -92,6 +115,23 @@ def wave_height(x):
             trough = i
     return crest, trough
 
+def spectra_stats(f,Sf,df=None):
+    
+    if df is None:
+        df = np.gradient(f)
+
+    m0 = np.sum(df*Sf)
+    m1 = np.sum(df*f*Sf)
+    m2 = np.sum(df*f**2*Sf)
+    Tm01 = m0/m1
+    tau = Tm01/2
+    c = 1/m0*np.sum(Sf*np.cos(2.*np.pi*f*tau)*df)
+    s = 1/m0*np.sum(Sf*np.sin(2.*np.pi*f*tau)*df)
+    p = -1/m2*np.sum(f**2.*Sf*np.cos(2*np.pi*f*tau)*df)
+    r = (c**2+s**2)**0.5
+    Hm0 = 4*np.sqrt(m0)
+    return Hm0, Tm01, c, s, p, r
+
 
 def wave_stats(timeseries,fs):
     """
@@ -119,10 +159,19 @@ def wave_stats(timeseries,fs):
         Larger values indicate greater groupiness.
     """
 
-    dcs = argcrossdown(timeseries)
-    Tz = np.mean(np.diff(dcs)/fs)
+    # Elevation statistics
     Hs = 4.*np.std(timeseries)
+    k3 = ss.skew(timeseries)
+    k4 = ss.kurtosis(timeseries)
 
+    # Indentify waves by zero down crossings
+    dcs = argcrossdown(timeseries)
+    d_eta = timeseries[dcs]-timeseries[dcs+1]
+    zc = dcs+timeseries[dcs]/d_eta
+    Tw = np.diff(zc)/fs
+    Tz = np.mean(Tw)
+
+    # Identify individual waves
     crests = []
     troughs = []
     for i in range(len(dcs)-1):
@@ -133,12 +182,22 @@ def wave_stats(timeseries,fs):
     troughs = np.array(troughs)
     r = np.corrcoef(crests**2,troughs**2)[0,1]
 
-    waves_heights = np.sort(crests - troughs)
-    Hmax = waves_heights[-1]
-    H13 = np.mean(waves_heights[-int(len(waves_heights)/3):])
+    # Wave heights
+    wave_heights = crests - troughs
+    height_inds = np.argsort(wave_heights)
+    r_unbiased = np.corrcoef(crests[height_inds[:-1]]**2,troughs[height_inds[:-1]]**2)[0,1]
+    sorted_heights = wave_heights[height_inds]
+    Hmax = sorted_heights[-1]
+    HmaxT = Tw[height_inds[-1]]
+    H13 = np.mean(sorted_heights[-int(len(sorted_heights)/3):])
+    H13_unbiased = np.mean(sorted_heights[-int(len(sorted_heights)/3)-1:-1])
     
-    return Tz, Hs, Hmax, H13, r
+    # Crest levels
+    crest_inds = np.argsort(crests)
+    Cmax = crests[crest_inds[-1]]
+    CmaxT2 = Tw[crest_inds[-1]]/2
 
+    return Tz, Hs, H13, H13_unbiased, Hmax, HmaxT, Cmax, CmaxT2, r, r_unbiased, k3, k4
 
 def freqs(T,dt):
     """
@@ -159,14 +218,14 @@ def freqs(T,dt):
     df : float
         Frequency bin width [s^-1]
     """
-    N = T // dt // 2
+    N = int(T / dt / 2)
     df = 1/(N*2*dt)
     f = np.arange(1,N+1)*df
     return f, df
 
 
 
-def time_domain_ras(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,with_fft=True,fft_equiv_duration=None):
+def time_domain_ras(tp,hs,gamma,duration=512,dt=1/8,seed=None,fft_equiv_duration=None,return_ts=False,with_fft=True):
     """
     Generate a time domain realisation of a JONSWAP spectrum using the 
     Random Amplitude Scheme.
@@ -236,9 +295,7 @@ def time_domain_ras(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,
     omega = 2*np.pi*f
 
     # Generate spectrum
-    S = jonswap(f,tp,hs,gamma)
-    # S2 = jonswap(f,5,hs,1)
-    S = S
+    S = jonswap(f,1/tp,hs,gamma)
 
     # Random amplitude
     if seed is None:
@@ -247,32 +304,38 @@ def time_domain_ras(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,
     else:
         rs = np.random.seed(seed)
 
-    a = np.sqrt(S*df)*np.random.randn(*omega.shape)
-    b = np.sqrt(S*df)*np.random.randn(*omega.shape)
+    a = np.sqrt(S*df)/2*np.random.randn(*omega.shape)
+    b = np.sqrt(S*df)/2*np.random.randn(*omega.shape)
+
+    # Calculate spectral parameters of realisation
+    n = len(a)
+    A = np.zeros(n+1).astype('complex')
+    A[1:] = (a + 1.0j*b)
+    fS = np.zeros(n+1) # Add zero freqeuncy
+    fS[1:] = f
+    Sf = np.abs(A)**2./df*2
+    Hm0, Tm01, c, s, p, r_spectra = spectra_stats(fS,Sf)
 
     if with_fft:
         # Timeseries from inverse  - more computationally efficient
-        n = len(a)
-        A = np.zeros(n+1).astype('complex')
-        A[1:] = (a - 1.0j*b)/2
         timeseries = np.fft.irfft(A,norm='forward')
     else:
         # Timeseries from sum of discrete components
         t = np.arange(0,duration,dt)
-        timeseries = np.sum(a[:,None]*np.cos(omega[:,None]*t[None,:]) + b[:,None]*np.sin(omega[:,None]*t[None,:]),axis=0)
+        timeseries = np.sum(a[:,None]*np.sin(omega[:,None]*t[None,:]) + b[:,None]*np.cos(omega[:,None]*t[None,:]),axis=0)
     
     if fft_equiv_duration is not None:
-        timeseries = timeseries[:int(duration//dt)]
+        timeseries = timeseries[:int(duration/dt)]
 
     # Time domain analysis
     if return_ts:
         return timeseries
     else:
-        Tz, Hs, Hmax, H13, r = wave_stats(timeseries,fs)
-        return Tz, Hs, Hmax, H13, r, seed
+        Tz, Hs, H13, H13_unbiased, Hmax, HmaxT, Cmax, CmaxT2, r_sample, r_unbiased, k3, k4 = wave_stats(timeseries,fs)
+        return Tz, Tm01, Hm0, Hs, H13, H13_unbiased, Hmax, HmaxT, Cmax, CmaxT2, r_spectra, r_sample, r_unbiased, k3, k4, seed
 
 
-def time_domain_das(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,with_fft=True,fft_equiv_duration=None):
+def time_domain_das(tp,hs,gamma,duration=512,dt=1/8,seed=None,fft_equiv_duration=None,return_ts=False,with_fft=True):
     """
     Generate a time domain realisation of a JONSWAP spectrum using the 
     Deterministic Amplitude Scheme (Random phase only) .
@@ -342,7 +405,8 @@ def time_domain_das(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,
     omega = 2*np.pi*f
 
     # Generate spectrum
-    S = jonswap(f,tp,hs,gamma)
+    S = jonswap(f,1/tp,hs,gamma)
+    Hm0, Tm01, c, s, p, r_spectra = spectra_stats(f,S)
     
     # Random amplitude
     if seed is None:
@@ -370,5 +434,5 @@ def time_domain_das(tp,hs,gamma,duration=40*60,dt=0.5,seed=None,return_ts=False,
     if return_ts:
         return timeseries
     else:
-        Tz, Hs, Hmax, H13, r = wave_stats(timeseries,fs)
-        return Tz, Hs, Hmax, H13, r, seed
+        Tz, Hs, H13, H13_unbiased, Hmax, HmaxT, Cmax, CmaxT2, r_sample, r_unbiased, k3, k4 = wave_stats(timeseries,fs)
+        return Tz, Tm01, Hm0, Hs, H13, H13_unbiased, Hmax, HmaxT, Cmax, CmaxT2, r_spectra, r_sample, r_unbiased, k3, k4, seed

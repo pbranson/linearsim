@@ -1,0 +1,78 @@
+- param: shape
+  transforms:
+    xpow: 1.0
+    xtran: log
+    ytran: log
+  v: Hs
+- param: loc
+  transforms:
+    xpow: -1.0
+    xtran: log
+    ytran: noop
+  v: Hs
+- param: scale
+  transforms:
+    xpow: 1.0
+    xtran: log
+    ytran: log
+  v: Hs
+- param: loc
+  transforms:
+    xpow: 1.0
+    xtran: log
+    ytran: noop
+  v: Tz
+- param: scale
+  transforms:
+    xpow: 1.0
+    xtran: log
+    ytran: log
+  v: Tz
+- param: shape
+  transforms:
+    xpow: 1.0
+    xtran: log
+    ytran: log
+  v: r_sample
+- param: loc
+  transforms:
+    xpow: -0.5
+    xtran: log
+    ytran: noop
+  v: r_sample
+- param: scale
+  transforms:
+    xpow: 1.0
+    xtran: log
+    ytran: log
+  v: r_sample
+- param: shape
+  transforms:
+    xpow: 0.5
+    xtran: log
+    ytran: log
+  v: HmHs
+- param: loc
+  transforms:
+    xpow: 0.6666666666666666
+    xtran: log
+    ytran: noop
+  v: HmHs
+- param: shape
+  transforms:
+    xpow: 1.0
+    xtran: log
+    ytran: log
+  v: Hmax
+- param: loc
+  transforms:
+    xpow: 0.5
+    xtran: log
+    ytran: noop
+  v: Hmax
+- param: scale
+  transforms:
+    xpow: 0.5
+    xtran: log
+    ytran: noop
+  v: Hmax
