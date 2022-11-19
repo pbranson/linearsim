@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.stats as ss
+import xarray as xr
 
 def hs(f,Sf):
     return 4.*np.sqrt(np.sum(Sf*np.gradient(f)))
@@ -436,3 +437,137 @@ def time_domain_das(tp,hs,gamma,duration=512,dt=1/8,seed=None,fft_equiv_duration
     else:
         Tz, Hs, H13, H13_unbiased, Hmax, HmaxT, Cmax, CmaxT2, r_sample, r_unbiased, k3, k4 = wave_stats(timeseries,fs)
         return Tz, Tm01, Hm0, Hs, H13, H13_unbiased, Hmax, HmaxT, Cmax, CmaxT2, r_spectra, r_sample, r_unbiased, k3, k4, seed
+
+
+
+def timeseries_from_seed(da_seed):
+    # if len(ds_seed.n) > 1:
+    #     raise ValueError("Can only return a single length (n) per function call.")
+    ts = xr.apply_ufunc(time_domain_ras,
+                        da_seed.tp,
+                        da_seed.hs,
+                        da_seed.gamma,
+                        da_seed.n,
+                        da_seed['dt'],
+                        da_seed,
+                        da_seed.fft_min_duration,
+                        True,
+                        input_core_dims=[[],]*8,
+                        output_core_dims=[['time'],],
+                        vectorize=True,
+                        dask='parallelized',
+                        output_dtypes=['float',]
+                        )
+    return ts
+
+def stats_from_seed(da_seed):
+    
+    output_variables = 'Tz, Tm01, Hm0, Hs, H13, H13_unbiased, Hmax, HmaxT, Cmax, CmaxT2, r_spectra, r_sample, r_unbiased, k3, k4, seed'
+
+    outputs = xr.apply_ufunc(time_domain_ras,
+                        da_seed.tp,
+                        da_seed.hs,
+                        da_seed.gamma,
+                        da_seed.n,
+                        da_seed['dt'],
+                        da_seed,
+                        da_seed.fft_min_duration,
+                        False,
+                        input_core_dims=[[],]*8,
+                        output_core_dims=[[],]*16,
+                        vectorize=True,
+                        dask='parallelized',
+                        output_dtypes=['float',]*16
+                        )
+    ds = xr.Dataset()
+    for v, o in zip(output_variables.split(',')[:-1],outputs[:-1]): # ignore the returned seed - same as input
+        ds[v.strip()] = o
+    ds = ds.assign_coords(da_seed.coords)
+    ds['seed']=da_seed
+    return ds
+
+def distribution_seeds(ds,quantiles=[0.01,0.05,0.1,0.25,0.5,0.75,0.9,0.95,0.99],dq=.01):
+    ds_i = ds.set_index({'seed':'this_seed'})
+    df = ds_i.to_dataframe()
+
+    univ_seeds = []
+    univ_values = []
+    joint_seeds = []
+    joint_values = []
+    for v1 in ds_i.data_vars:
+        
+        df_sorted = df.sort_values(v1)
+
+        # Get the seeds for the univariate percentiles - based on ranked index
+        idx_u = (np.array(quantiles)*len(df_sorted)).astype(int)
+        u_quantile_seeds = df_sorted.iloc[idx_u].index
+        u_quantile_values = df_sorted.iloc[idx_u][v1]
+        da_u = xr.DataArray(np.expand_dims(u_quantile_seeds,axis=0),dims=("v1","quantiles_v1"),coords={"v1":[v1,],"quantiles_v1":quantiles})
+        da_uv = xr.DataArray(np.expand_dims(u_quantile_values,axis=0),dims=("v1","quantiles_v1"),coords={"v1":[v1,],"quantiles_v1":quantiles})
+        univ_seeds.append(da_u)
+        univ_values.append(da_uv)
+
+        # Get the seeds for the multivariate percentiles - based on ranked index
+        this_v1_seeds = []
+        this_v1_values = []
+        for q in quantiles:
+            this_q_seeds = []
+            this_q_values = []
+            s = int((q-dq/2)*len(df_sorted))
+            e = int((q+dq/2)*len(df_sorted))
+            df_subset = df_sorted.iloc[s:e]
+            for v2 in ds_i.data_vars:
+
+                if v2 != v1:
+                    df_subset_sorted = df_subset[v2].sort_values()
+                    idx = (np.array(quantiles)*len(df_subset_sorted)).astype(int)
+                    quantile_seeds = df_subset_sorted.iloc[idx].index
+                    quantile_values = df_subset_sorted.iloc[idx]
+                else:
+                    quantile_seeds = np.zeros_like(quantiles).astype("int")
+                    quantile_values = np.zeros_like(quantiles) * np.nan
+                da=xr.DataArray(np.expand_dims(quantile_seeds,axis=0),dims=("v2","quantiles_v2"),coords={"v2":[v2,],"quantiles_v2":quantiles})
+                dav=xr.DataArray(np.expand_dims(quantile_values,axis=0),dims=("v2","quantiles_v2"),coords={"v2":[v2,],"quantiles_v2":quantiles})
+                this_q_seeds.append(da)
+                this_q_values.append(dav)
+
+            da_v2 = xr.concat(this_q_seeds,dim="v2")
+            da_v2 = da_v2.assign_coords({"quantiles_v1":q})
+            this_v1_seeds.append(da_v2)
+
+            dav_v2 = xr.concat(this_q_values,dim="v2")
+            dav_v2 = dav_v2.assign_coords({"quantiles_v1":q})
+            this_v1_values.append(dav_v2)
+
+        da_v1 = xr.concat(this_v1_seeds,dim="quantiles_v1")
+        da_v1 = da_v1.assign_coords({"v1":v1})
+        joint_seeds.append(da_v1)
+
+        dav_v1 = xr.concat(this_v1_values,dim="quantiles_v1")
+        dav_v1 = dav_v1.assign_coords({"v1":v1})
+        joint_values.append(dav_v1)
+
+    univ_seeds = xr.concat(univ_seeds,dim="v1")
+    joint_seeds = xr.concat(joint_seeds,dim="v1")
+
+    univ_values = xr.concat(univ_values,dim="v1")
+    joint_values = xr.concat(joint_values,dim="v1")
+
+    ds_out = xr.Dataset()
+    ds_out['univariate_seeds'] = univ_seeds
+    ds_out['univariate_seeds'].attrs["description"] = "Integer seeds at a given quantile of the distribution for variable [v1] for use with time_domain_ras function to regenerate timeseries"
+
+    ds_out['multivariate_seeds'] = joint_seeds
+    ds_out['multivariate_seeds'].attrs["description"] = "Integer seeds from the marginal distribution of variable [v1] over a qantile range of [quantile_v1-dq/2,quantile_v1+dq/2] at marginal quantile_v2 for marginal variable v2. I.e. the quantiles of the joint probability of v1 and v2."
+
+    ds_out['univariate_values'] = univ_values
+    ds_out['univariate_values'].attrs["description"] = "Values of v1 at quantile_v1"
+
+    ds_out['multivariate_values'] = joint_values
+    ds_out['multivariate_values'].attrs["description"] = "Values of marginal distribution of v2 at quantile_v2 given v1 at quantile_v1"
+
+    ds_out = ds_out.assign_coords({"dq":dq})
+    ds_out = ds_out.assign_coords(ds.coords)
+    ds_out = ds_out.drop("seed")
+
+    return ds_out
