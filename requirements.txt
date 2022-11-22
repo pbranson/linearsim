@@ -6,3 +6,6 @@ zarr
 seaborn
 holoviews
 hvplot
+scipy
+statsmodels
+netcdf4

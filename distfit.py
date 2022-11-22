@@ -121,6 +121,38 @@ def get_invtransform(t):
 
 
 def parameter_model(data,ytran='noop',xtran='log',xpow=1.,v='',p='',plot=False,labels=None):
+    """
+    Fit a model for the probability distribution parameters as a function of JONSWAP gamma and number of waves (N).
+    
+    For further details refer to publication (TBC). 
+
+    Parameters
+    ----------
+    data : xarray Dataset 
+        Dataset of distribution fit coefficients as a function of gamma and N.
+    ytran : string either ['noop', 'log']
+        The transformation to apply to the distribution coefficient
+    xtran : string either ['noop', 'log']
+        The transformation to apply to N
+    xpow : float
+        Power to raise transformed x variate, i.e. xtran(N)**xpow
+    v : string
+        Time-domain variable being evaluated (i.e. Hs etc)
+    p : string
+        Distribution parameter being modelled (i.e. loc [location], shape or scale)  
+    plot : boolean
+        Generate plots of model fits
+    labels : Dictionary 
+        Plot labels for each variable v
+
+    Returns
+    -------
+    ds_regression : xarray Dataset
+        A dataset with regression results returned from statsmodels.OLS
+    ds_param_model : xarray Dataset 
+        Dataset containing fitted coefficients for the given variable (v) and
+        parameter (p). Allows estimation of p given an input gamma and N.
+    """
 
     if plot:
         fig,axs = plt.subplot_mosaic('AA\nAA\n01',figsize=(7,8))
@@ -128,7 +160,6 @@ def parameter_model(data,ytran='noop',xtran='log',xpow=1.,v='',p='',plot=False,l
         fig = None
 
     results = []
-    handles = []
     for gamma in data.gamma:
         this_data = data.sel(gamma=gamma)
 
@@ -208,6 +239,27 @@ def parameter_model(data,ytran='noop',xtran='log',xpow=1.,v='',p='',plot=False,l
     return ds_regression, ds_param_model, fig
 
 def get_distribution(ds_model,v='Hs',gamma=1.0,N=50):
+    """
+    Get a parametric probability distribution for a given variable, gamma and number of waves 
+
+    Parameters
+    ----------
+    ds_model : xarray Dataset 
+        Dataset of univariate parametric model coefficients.
+    v : string
+        Time-domain variable, one of ['Hs','Tz','Hmax','HmHs','r_sample']
+    gamma : float in range [1..8]
+        JONSWAP peak enhancement factor
+    N : float in range [10..500]
+        The expected number of waves in the sample.
+
+    Returns
+    -------
+    dist_inst : scipy.stats.rv_continuous 
+        A frozen scipy.stats.rv_continuous with distribution parameters 
+        predicted by the empirical model coefficients of ds_model.
+    """
+
     ds_var = ds_model.sel(variable=v)
     dist_name = str(ds_var.distribution.values)
     dist = getattr(ss, dist_name)

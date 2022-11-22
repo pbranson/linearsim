@@ -441,8 +441,20 @@ def time_domain_das(tp,hs,gamma,duration=512,dt=1/8,seed=None,fft_equiv_duration
 
 
 def timeseries_from_seed(da_seed):
-    # if len(ds_seed.n) > 1:
-    #     raise ValueError("Can only return a single length (n) per function call.")
+    """
+    Generate timeseries from a DataArray of random seeds. 
+
+    Parameters
+    ----------
+    da_seed : xarray DataArray of int32 seeds.
+        The DataArray must have coordinates for tp, hs, gamma, n, dt and fft_min_duration.
+
+    Returns
+    -------
+    ts : xarray DataArray
+        Time series of (usually non-dimensional) water elevation (eta). 
+        Eta is normalised by Hs and time by Tp.
+    """
     ts = xr.apply_ufunc(time_domain_ras,
                         da_seed.tp,
                         da_seed.hs,
@@ -458,9 +470,23 @@ def timeseries_from_seed(da_seed):
                         dask='parallelized',
                         output_dtypes=['float',]
                         )
+    ts = ts.assign_coords({'time':xr.DataArray(np.arange(len(ts.time))*float(da_seed['dt']),dims=['time',])})
     return ts
 
 def stats_from_seed(da_seed):
+    """
+    Generate timeseries statistics from a DataArray of random seeds. 
+
+    Parameters
+    ----------
+    da_seed : xarray DataArray of int32 seeds.
+        The DataArray must have coordinates for tp, hs, gamma, n, dt and fft_min_duration.
+
+    Returns
+    -------
+    ds : xarray Dataset
+        Time-domain statistics calculated for the realisation. See time_domain_ras.
+    """
     
     output_variables = 'Tz, Tm01, Hm0, Hs, H13, H13_unbiased, Hmax, HmaxT, Cmax, CmaxT2, r_spectra, r_sample, r_unbiased, k3, k4, seed'
 
@@ -487,6 +513,30 @@ def stats_from_seed(da_seed):
     return ds
 
 def distribution_seeds(ds,quantiles=[0.01,0.05,0.1,0.25,0.5,0.75,0.9,0.95,0.99],dq=.01):
+    """
+    Sample a large ensemble of time-domain statistics at a given set of quantiles for both 
+    single parameters and their joint distribtions between pairs of parameters.
+
+    Parameters
+    ----------
+    ds : xarray Dataset 
+        Time domain statistics returned from time_domain_ras. 
+        Assumes that the data is one-dimensional (i.e. a set of random seeds).
+    quantiles : list of float between [0..1]
+        Quantiles at which to identify a ransom seed
+    dq : float, default=0.01
+        Quantile interval over which to subsample joint distribution
+
+    Returns
+    -------
+    ds_out : xarray Dataset
+        An xarray dataset with the following data variables:
+         - univariate_seeds : DataArray of seeds for each quantile of each data variable in ds
+         - univariate_values : DataArray of values for each quantile of each data variable in ds
+         - multivariate_seeds : DataArray of seeds for each quantile of 'v2' given a quantile for 'v1'
+         - multivariate_values : DataArray of values for each quantile of 'v2' given a quantile for 'v1'
+    """
+
     ds_i = ds.set_index({'seed':'this_seed'})
     df = ds_i.to_dataframe()
 
